@@ -16,18 +16,24 @@
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 
+#include "MovingAverage.h"
+
 #define redPin D5
 #define greenPin D6
 #define bluePin D7
 
 
 // Value of Z axis lower than this shuts down the light
-#define Zmin 62
+#define Zmin 40
 
 const char *ssid = "Nativa";
 const char *password = "summerschool";
+const uint8_t step_color = 4;
 
 int16_t z10, r, g, b;
+
+MovingAverage<int16_t, 32> moving_average;
+
 /* Case 1: Accelerometer on the I2C bus (most common) */
 MMA_7455 accel = MMA_7455(i2c_protocol);
 
@@ -104,6 +110,19 @@ String webpage = ""
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
+int16_t fade_color(int16_t target, int16_t current)
+{
+  int16_t step_current = abs(target - current);
+
+  if (step_current > step_color)
+    step_current = step_color;
+  
+  if (target < current)
+    return current - step_current;
+  else
+    return current + step_current;
+}
+
 void handleRoot() {
 // Serial.println("handle root..");
 String red = webServer.arg(0); // read RGB arguments
@@ -113,10 +132,6 @@ String blue = webServer.arg(2);
 r = red.toInt();
 g = green.toInt();
 b = blue.toInt();
-
-analogWrite(redPin, r);
-analogWrite(greenPin, g);
-analogWrite(bluePin, b);
 
 // Serial.println(red.toInt()); // for TESTING
 // Serial.println(green.toInt()); // for TESTING
@@ -173,47 +188,37 @@ webServer.begin();
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 void loop() {
-dnsServer.processNextRequest();
-webServer.handleClient();
-
-z10 = accel.readAxis10('z');
-Serial.print("\tZ: ");  Serial.print(z10, DEC);
-if(z10 < Zmin){
-  analogWrite(redPin, 1023); // R off
-  analogWrite(greenPin, 1023); // G off
-  analogWrite(bluePin, 1023); // B off
-}
-else {
-  analogWrite(redPin, r); // R off
-  analogWrite(greenPin, g); // G off
-  analogWrite(bluePin, b); // B off
-}
-delay(4);
-}
-//////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////
-
-void testRGB() { // fade in and out of Red, Green, Blue
-
-analogWrite(redPin, 1023); // R off
-analogWrite(greenPin, 1023); // G off
-analogWrite(bluePin, 1023); // B off
-
-fade(redPin); // R
-fade(greenPin); // G
-fade(bluePin); // B
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-
-void fade(int pin) {
-
-for (int u = 0; u < 1024; u++) {
-analogWrite(pin, 1023 - u);
-delay(1);
-}
-for (int u = 0; u < 1024; u++) {
-analogWrite(pin, u);
-delay(1);
-}
+  static int16_t r_cur = 1023;
+  static int16_t g_cur = 1023;
+  static int16_t b_cur = 1023;
+  
+  int16_t r_tar = 0;
+  int16_t g_tar = 0;
+  int16_t b_tar = 0;
+  
+  dnsServer.processNextRequest();
+  webServer.handleClient();
+  
+  z10 = moving_average.filter(abs(accel.readAxis10('z')));
+  Serial.print("\tZ: ");  Serial.println(z10, DEC);
+  if(z10 < Zmin){
+    r_tar = 1023;
+    g_tar = 1023;
+    b_tar = 1023;
+  }
+  else {
+    r_tar = r;
+    g_tar = g;
+    b_tar = b;
+  }
+  
+  r_cur = fade_color(r_tar, r_cur);
+  g_cur = fade_color(g_tar, g_cur);
+  b_cur = fade_color(b_tar, b_cur);
+  
+  analogWrite(redPin, r_cur);
+  analogWrite(greenPin, g_cur);
+  analogWrite(bluePin, b_cur);
+  
+  delay(4);
 }
